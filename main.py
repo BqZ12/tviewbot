@@ -1,15 +1,16 @@
 from flask import Flask, request
-import time
+import os
 import threading
+import time
 import requests
 
-# Telegram bot credentials
-TOKEN = "7736248098:AAHjLueg2h4fnNrirgAhMoc8eQzGgGwGj18"  # Vervang door jouw bot token
-CHAT_ID = "-1002446746313"  # Vervang door jouw chat ID
-STOPPED = False  # Flag to check if user stopped notifications
-ALERT_ACTIVE = False  # Check if an alert is currently active
-CURRENT_ALERT = ""  # Stores the current alert message
-LAST_UPDATE_ID = None  # Variabele om de laatst verwerkte update bij te houden
+# Telegram bot credentials (gelezen uit environment variables)
+TOKEN = os.getenv("TOKEN")  # Je Telegram bot-token
+CHAT_ID = os.getenv("CHAT_ID")  # Je Telegram chat-ID
+STOPPED = False
+ALERT_ACTIVE = False
+CURRENT_ALERT = ""
+LAST_UPDATE_ID = None
 
 app = Flask(__name__)
 
@@ -21,30 +22,60 @@ def send_message(chat_id, text, reply_markup=None):
     data = {"chat_id": chat_id, "text": text}
     if reply_markup:
         data["reply_markup"] = reply_markup
-    response = requests.post(url, json=data)
-    print(f"DEBUG: Telegram API response: {response.json()}")
+
+    # Debug logs voor de API-aanroep
+    print(f"DEBUG: Sending request to {url} with data {data}")
+    try:
+        response = requests.post(url, json=data)
+        print(f"DEBUG: Telegram API response: {response.json()}")
+    except Exception as e:
+        print(f"ERROR: Failed to send message - {e}")
+
+def handle_command(command):
+    """
+    Handle Telegram commands.
+    """
+    global ALERT_ACTIVE, STOPPED
+
+    if command.startswith("/alert"):
+        try:
+            # Parseer het commando
+            _, ticker, price = command.split(" ")
+            # Standaard melding
+            send_message(CHAT_ID, f"🚨 Price Alert!\n📈 Ticker: {ticker}\n💰 Price: {price}")
+        except ValueError:
+            send_message(CHAT_ID, "⚠️ Gebruik: /alert <ticker> <prijs>")
 
 def check_updates():
     """
-    Check if the user clicked the stop button.
+    Check for commands or button presses in Telegram.
     """
-    global STOPPED, LAST_UPDATE_ID
+    global LAST_UPDATE_ID, STOPPED
     url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
     params = {"offset": LAST_UPDATE_ID + 1} if LAST_UPDATE_ID else {}
-    response = requests.get(url, params=params).json()
+    try:
+        response = requests.get(url, params=params).json()
+        print(f"DEBUG: Updates response: {response}")
 
-    print(f"DEBUG: Updates response: {response}")
+        for update in response.get("result", []):
+            LAST_UPDATE_ID = update["update_id"]
 
-    for update in response.get("result", []):
-        print(f"DEBUG: Processing update: {update}")
-        LAST_UPDATE_ID = update["update_id"]
+            # Command verwerkingssectie
+            if "message" in update and "text" in update["message"]:
+                command = update["message"]["text"]
+                print(f"DEBUG: Received command: {command}")
+                handle_command(command)
 
-        if "callback_query" in update:
-            callback_query_id = update["callback_query"]["id"]
-            if update["callback_query"]["data"] == "stop_alerts":
-                STOPPED = True
-                send_message(CHAT_ID, "✅ Alerts stopped. Have a good rest!")
-                requests.post(f"https://api.telegram.org/bot{TOKEN}/answerCallbackQuery", json={"callback_query_id": callback_query_id})
+            # Callback knopverwerking
+            if "callback_query" in update:
+                callback_query_id = update["callback_query"]["id"]
+                if update["callback_query"]["data"] == "stop_alerts":
+                    STOPPED = True
+                    send_message(CHAT_ID, "✅ Alerts stopped. Have a good rest!")
+                    requests.post(f"https://api.telegram.org/bot{TOKEN}/answerCallbackQuery", json={"callback_query_id": callback_query_id})
+
+    except Exception as e:
+        print(f"ERROR: Failed to check updates - {e}")
 
 def start_repeating_alert():
     """
@@ -61,7 +92,7 @@ def start_repeating_alert():
         time.sleep(5)
         check_updates()
 
-    ALERT_ACTIVE = False  # Reset alert status when stopped
+    ALERT_ACTIVE = False
     print("DEBUG: Repeating alerts stopped.")
 
 @app.route('/')
@@ -74,9 +105,8 @@ def webhook():
     Handle TradingView webhook alerts.
     """
     global ALERT_ACTIVE, STOPPED, CURRENT_ALERT
-    STOPPED = False  # Reset de stop flag
+    STOPPED = False
 
-    # Verwerk de data van TradingView
     data = request.json
     print(f"DEBUG: Webhook received data: {data}")
 
@@ -84,10 +114,8 @@ def webhook():
     price = data.get("price", "Unknown Price")
     message = data.get("message", "Price alert triggered!")
 
-    # Stel het huidige alertbericht in
     CURRENT_ALERT = f"🚨 {message}\n📈 Ticker: {ticker}\n💰 Price: {price}"
 
-    # Start herhaalde meldingen als dat nog niet gebeurt
     if not ALERT_ACTIVE:
         ALERT_ACTIVE = True
         threading.Thread(target=start_repeating_alert).start()
@@ -100,12 +128,14 @@ def clear_old_updates():
     """
     global LAST_UPDATE_ID
     url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
-    response = requests.get(url).json()
-
-    if response.get("result"):
-        LAST_UPDATE_ID = response["result"][-1]["update_id"]
-        print(f"DEBUG: Cleared old updates up to {LAST_UPDATE_ID}")
+    try:
+        response = requests.get(url).json()
+        if response.get("result"):
+            LAST_UPDATE_ID = response["result"][-1]["update_id"]
+            print(f"DEBUG: Cleared old updates up to {LAST_UPDATE_ID}")
+    except Exception as e:
+        print(f"ERROR: Failed to clear old updates - {e}")
 
 if __name__ == "__main__":
-    clear_old_updates()  # Verwijder oude updates
+    clear_old_updates()
     app.run(host="0.0.0.0", port=5000)
