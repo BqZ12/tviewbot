@@ -31,21 +31,6 @@ def send_message(chat_id, text, reply_markup=None):
     except Exception as e:
         print(f"ERROR: Failed to send message - {e}")
 
-def handle_command(command):
-    """
-    Handle Telegram commands.
-    """
-    global ALERT_ACTIVE, STOPPED
-
-    if command.startswith("/alert"):
-        try:
-            # Parseer het commando
-            _, ticker, price = command.split(" ")
-            # Standaard melding
-            send_message(CHAT_ID, f"🚨 Price Alert!\n📈 Ticker: {ticker}\n💰 Price: {price}")
-        except ValueError:
-            send_message(CHAT_ID, "⚠️ Gebruik: /alert <ticker> <prijs>")
-
 def check_updates():
     """
     Check for commands or button presses in Telegram.
@@ -60,18 +45,12 @@ def check_updates():
         for update in response.get("result", []):
             LAST_UPDATE_ID = update["update_id"]
 
-            # Command verwerkingssectie
-            if "message" in update and "text" in update["message"]:
-                command = update["message"]["text"]
-                print(f"DEBUG: Received command: {command}")
-                handle_command(command)
-
             # Callback knopverwerking
             if "callback_query" in update:
                 callback_query_id = update["callback_query"]["id"]
                 if update["callback_query"]["data"] == "stop_alerts":
                     STOPPED = True
-                    send_message(CHAT_ID, "✅ Alerts stopped. Have a good rest!")
+                    send_message(CHAT_ID, "✅ Alerts stopped!")
                     requests.post(f"https://api.telegram.org/bot{TOKEN}/answerCallbackQuery", json={"callback_query_id": callback_query_id})
 
     except Exception as e:
